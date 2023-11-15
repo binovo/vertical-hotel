@@ -574,6 +574,53 @@ class HotelReservation(models.Model):
         return True
 
     @api.multi
+    def _prepare_duration_val(self):
+        reservation = self
+        reservation.ensure_one()
+        checkin_date = reservation["checkin"]
+        checkout_date = reservation["checkout"]
+        duration_vals = self.onchange_check_dates(
+            checkin_date=checkin_date,
+            checkout_date=checkout_date,
+            duration=False,
+        )
+        return duration_vals.get("duration") or 0.0
+
+    @api.multi
+    def _prepare_hotel_folio_vals(self):
+        reservation = self
+        reservation.ensure_one()
+        folio_vals = {
+            "date_order": reservation.date_order,
+            "warehouse_id": reservation.warehouse_id.id,
+            "partner_id": reservation.partner_id.id,
+            "pricelist_id": reservation.pricelist_id.id,
+            "partner_invoice_id": reservation.partner_invoice_id.id,
+            "partner_shipping_id": reservation.partner_shipping_id.id,
+            "checkin_date": reservation.checkin,
+            "checkout_date": reservation.checkout,
+            "duration": reservation._prepare_duration_val(),
+            "reservation_id": reservation.id,
+            "service_lines": reservation["folio_id"],
+        }
+        return folio_vals
+
+    @api.multi
+    def _prepare_hotel_folio_room_line_vals(self, room_reserve):
+        reservation = self
+        reservation.ensure_one()
+        folio_line_vals = {
+            "checkin_date": reservation.checkin,
+            "checkout_date": reservation.checkout,
+            "product_id": room_reserve.product_id and room_reserve.product_id.id,
+            "name": reservation["reservation_no"],
+            "price_unit": room_reserve.list_price,
+            "product_uom_qty": reservation._prepare_duration_val(),
+            "is_reserved": True,
+        }
+        return folio_line_vals
+
+    @api.multi
     def create_folio(self):
         """
         This method is for create new hotel folio.
@@ -585,8 +632,6 @@ class HotelReservation(models.Model):
         room_obj = self.env["hotel.room"]
         for reservation in self:
             folio_lines = []
-            checkin_date = reservation["checkin"]
-            checkout_date = reservation["checkout"]
             if not self.checkin < self.checkout:
                 raise ValidationError(
                     _(
@@ -594,40 +639,14 @@ class HotelReservation(models.Model):
                                          than the Check-in date."
                     )
                 )
-            duration_vals = self.onchange_check_dates(
-                checkin_date=checkin_date,
-                checkout_date=checkout_date,
-                duration=False,
-            )
-            duration = duration_vals.get("duration") or 0.0
-            folio_vals = {
-                "date_order": reservation.date_order,
-                "warehouse_id": reservation.warehouse_id.id,
-                "partner_id": reservation.partner_id.id,
-                "pricelist_id": reservation.pricelist_id.id,
-                "partner_invoice_id": reservation.partner_invoice_id.id,
-                "partner_shipping_id": reservation.partner_shipping_id.id,
-                "checkin_date": reservation.checkin,
-                "checkout_date": reservation.checkout,
-                "duration": duration,
-                "reservation_id": reservation.id,
-                "service_lines": reservation["folio_id"],
-            }
+            folio_vals = reservation._prepare_hotel_folio_vals()
             for line in reservation.reservation_line:
                 for r in line.reserve:
                     folio_lines.append(
                         (
                             0,
                             0,
-                            {
-                                "checkin_date": checkin_date,
-                                "checkout_date": checkout_date,
-                                "product_id": r.product_id and r.product_id.id,
-                                "name": reservation["reservation_no"],
-                                "price_unit": r.list_price,
-                                "product_uom_qty": duration,
-                                "is_reserved": True,
-                            },
+                            reservation._prepare_hotel_folio_room_line_vals(r),
                         )
                     )
                     res_obj = room_obj.browse([r.id])
